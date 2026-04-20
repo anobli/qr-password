@@ -1,0 +1,34 @@
+# Le nom du champ 'id' servira pour le nom du fichier image
+identity_field: "ferme"
+
+schema:
+  ferme:
+    type: str
+    help: "Nom de l'exploitation"
+  yardian_login:
+    type: str
+    help: "Identifiant du yardian"
+  yardian_pass:
+    type: str
+    help: "Mot de passe du yardian"
+  tempest_login:
+    type: str
+    help: "Identifiant du tempest"
+  tempest_pass:
+    type: str
+    help: "Mot de passe du tempest"
+  token_tempest:
+    type: str
+    help: "Token du tempest"
+  router_4g_login:
+    type: str
+    help: "Identifiant du router 4g"
+  router_4g_pass:
+    type: str
+    help: "Mot de passe du router 4g"
+  router_4g_ssid:
+    type: str
+    help: "Nom du wifi"
+  router_4g_psk:
+    type: str
+    help: "Mot de passe du wifi"
