@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gordios - Maintenance Accès</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        :root { --primary: #2c3e50; --accent: #3498db; --success: #27ae60; --bg: #f4f7f6; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 450px; }
+        h1 { color: var(--primary); font-size: 1.5rem; margin-bottom: 10px; text-align: center; }
+        p { color: #666; font-size: 0.9rem; text-align: center; margin-bottom: 25px; }
+        .section { margin-bottom: 20px; }
+        button { width: 100%; padding: 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: transform 0.1s, opacity 0.2s; font-size: 1rem; }
+        button:active { transform: scale(0.98); }
+        .btn-yubi { background: var(--accent); color: white; margin-bottom: 15px; }
+        .btn-pass { background: #95a5a6; color: white; }
+        input { width: 100%; padding: 12px; margin-bottom: 10px; border: 2px solid #eee; border-radius: 6px; box-sizing: border-box; font-size: 1rem; outline: none; }
+        input:focus { border-color: var(--accent); }
+        #result-area { margin-top: 25px; display: none; animation: fadeIn 0.5s; }
+        .data-box { background: #e8f6ef; border-left: 5px solid var(--success); padding: 15px; border-radius: 4px; overflow-x: auto; }
+        pre { margin: 0; font-family: 'Consolas', monospace; font-size: 0.9rem; color: #2d3436; }
+        .error { color: #e74c3c; background: #fdf2f2; padding: 10px; border-radius: 4px; display: none; font-size: 0.85rem; margin-top: 10px; text-align: center; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .divider { display: flex; align-items: center; text-align: center; margin: 20px 0; color: #ccc; }
+        .divider::before, .divider::after { content: ''; flex: 1; border-bottom: 1px solid #eee; }
+        .divider:not(:empty)::before { margin-right: .5em; }
+        .divider:not(:empty)::after { margin-left: .5em; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Gordios Secure Access</h1>
+    <p>Utilisez votre YubiKey NFC ou votre code de secours pour afficher les accès de maintenance.</p>
+
+    <div class="section">
+        <button class="btn-yubi" onclick="unlockWithYubikey()">🛡️ Déverrouiller avec YubiKey</button>
+        
+        <div class="divider">OU</div>
+        
+        <input type="password" id="passInput" placeholder="Code de secours agriculteur">
+        <button class="btn-pass" onclick="unlockWithPassword()">🔑 Utiliser le code de secours</button>
+    </div>
+
+    <div id="error-msg" class="error">Impossible de déchiffrer les données. Vérifiez votre clé ou votre code.</div>
+
+    <div id="result-area">
+        <div style="font-weight: bold; margin-bottom: 8px; color: var(--success);">Données récupérées :</div>
+        <div class="data-box">
+            <pre id="output-data"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Configuration de la dérivation de clé (doit matcher le script Python)
+    function deriveKey(password, saltHex) {
+        const salt = CryptoJS.enc.Hex.parse(saltHex);
+        return CryptoJS.PBKDF2(password, salt, {
+            keySize: 256/32,
+            iterations: 100000,
+            hasher: CryptoJS.algo.SHA256
+        });
+    }
+
+    function decryptPayload(fullPayloadBase64, password) {
+        try {
+            console.log("Tentative de déchiffrement...");
+            
+            // 1. Nettoyage et décodage Base64
+            // On s'assure que les éventuels espaces ou caractères spéciaux de l'URL ne gênent pas
+            const cleanBase64 = fullPayloadBase64.trim().replace(/ /g, '+');
+            const rawData = CryptoJS.enc.Base64.parse(cleanBase64);
+            
+            if (rawData.sigBytes < 33) {
+                console.error("Payload trop court");
+                return null;
+            }
+
+            // 2. Découpage
+            const salt = CryptoJS.lib.WordArray.create(rawData.words.slice(0, 4), 16);
+            const nonce = CryptoJS.lib.WordArray.create(rawData.words.slice(4, 8), 16);
+            const ciphertext = CryptoJS.lib.WordArray.create(rawData.words.slice(8), rawData.sigBytes - 32);
+
+            // 3. Dérivation (SHA256(password + salt))
+            const passWords = CryptoJS.enc.Utf8.parse(password);
+            const key = CryptoJS.SHA256(passWords.concat(salt));
+
+            console.log("Key (hex):", key.toString());
+            console.log("Salt (hex):", salt.toString());
+
+            // 4. Déchiffrement AES-CTR
+            const decrypted = CryptoJS.AES.decrypt(
+                { ciphertext: ciphertext },
+                key,
+                { 
+                    iv: nonce, 
+                    mode: CryptoJS.mode.CTR, 
+                    padding: CryptoJS.pad.NoPadding 
+                }
+            );
+
+            const result = decrypted.toString(CryptoJS.enc.Utf8);
+            
+            if (!result) {
+                console.warn("Déchiffrement réussi mais résultat vide (mauvais mot de passe ?)");
+                return null;
+            }
+
+            console.log("Succès !");
+            return result;
+        } catch (e) {
+            console.error("Erreur technique:", e);
+            return null;
+        }
+    }
+
+    function getFragments() {
+        const hash = window.location.hash.substring(1);
+        if (!hash.includes('.')) return [hash, null];
+        return hash.split('.');
+    }
+
+    function showResult(text) {
+        const area = document.getElementById('result-area');
+        const output = document.getElementById('output-data');
+        const error = document.getElementById('error-msg');
+        
+        try {
+            const data = JSON.parse(text);
+            error.style.display = 'none';
+            
+            // Construction d'un affichage ligne par ligne "Clé : Valeur"
+            let displayString = "";
+            for (const [label, value] of Object.entries(data)) {
+                displayString += `${label} : ${value}\n`;
+            }
+            
+            output.innerText = displayString;
+            area.style.display = 'block';
+        } catch (e) {
+            console.error("Erreur de parsing:", e);
+            error.style.display = 'block';
+            area.style.display = 'none';
+        }
+    }
+
+    async function unlockWithYubikey() {
+        const [yubiPayload] = getFragments();
+        if (!yubiPayload) return alert("Aucune donnée Yubikey trouvée.");
+
+        try {
+            // Challenge HMAC-secret via WebAuthn
+            const options = {
+                publicKey: {
+                    challenge: new Uint8Array(32),
+                    timeout: 60000,
+                    allowCredentials: [], // Accepter toute clé enregistrée
+                    extensions: { hmacCreateSecret: true }
+                }
+            };
+            
+            const credential = await navigator.credentials.get(options);
+            const authExt = credential.getClientExtensionResults();
+            
+            if (authExt && authExt.hmacGetSecret) {
+                // On utilise le hash retourné par la Yubikey comme mot de passe
+                const secret = CryptoJS.lib.WordArray.create(authExt.hmacGetSecret.output).toString();
+                showResult(decryptPayload(yubiPayload, secret));
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Erreur YubiKey : Assurez-vous d'utiliser Chrome/Safari sur mobile et une connexion HTTPS.");
+        }
+    }
+
+    function unlockWithPassword() {
+        const [, backupPayload] = getFragments();
+        const pass = document.getElementById('passInput').value;
+        if (!backupPayload) return alert("Aucune donnée de secours trouvée.");
+        if (!pass) return alert("Entrez le code de secours.");
+
+        showResult(decryptPayload(backupPayload, pass));
+    }
+</script>
+
+</body>
+</html>
